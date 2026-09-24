@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>健康助理</title>
+<style>
+  :root {
+    --bg: #f6f7f4; --card: #ffffff; --text: #1f2a24; --muted: #6b766f;
+    --line: #e3e6e1; --accent: #2f7d5b; --accent-soft: #e3f1ea;
+    --warn: #b5651d; --warn-soft: #fbeee2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141816; --card: #1d2320; --text: #e6ebe8; --muted: #95a19a;
+      --line: #2c3430; --accent: #5cc294; --accent-soft: #1f3a2d;
+      --warn: #e59a57; --warn-soft: #3a2a1c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
+  header h1 { margin: 0; font-size: 24px; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  nav { display: flex; gap: 6px; margin: 18px 0; flex-wrap: wrap; }
+  nav button {
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    padding: 7px 14px; border-radius: 999px; cursor: pointer; font: inherit;
+  }
+  nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  section { display: none; }
+  section.active { display: block; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 16px; margin: 0 0 10px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .status { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .status .big { font-size: 26px; font-weight: 600; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px;
+          background: var(--accent-soft); color: var(--accent); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 10px; }
+  .bar > div { height: 100%; background: var(--accent); }
+  ul.timeline { list-style: none; margin: 0; padding: 0; }
+  ul.timeline li { display: grid; grid-template-columns: 96px 1fr; gap: 10px; padding: 8px 0;
+                   border-bottom: 1px dashed var(--line); }
+  ul.timeline li:last-child { border-bottom: none; }
+  ul.timeline .t { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+  ul.timeline li.now { background: var(--accent-soft); border-radius: 8px; padding-left: 6px; }
+  .check { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0;
+           border-bottom: 1px solid var(--line); cursor: pointer; }
+  .check:last-child { border-bottom: none; }
+  .check input { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--accent); flex: none; }
+  .check .streak { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  input[type=time], input[type=number], select {
+    font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 8px; width: 100%;
+  }
+  button.primary {
+    font: inherit; background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    padding: 8px 16px; cursor: pointer; margin-top: 12px;
+  }
+  button.link { font: inherit; background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: normal; font-size: 13px; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .tip { font-size: 15px; }
+  .tip .src { display: block; margin-top: 8px; }
+  .advice li { margin-bottom: 6px; }
+  footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
+  @media (max-width: 480px) {
+    ul.timeline li { grid-template-columns: 76px 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>健康助理</h1>
+    <p id="today"></p>
+  </header>
+
+  <nav>
+    <button data-tab="home" class="active">今日</button>
+    <button data-tab="log">记录</button>
+    <button data-tab="review">回顾</button>
+    <button data-tab="settings">设置</button>
+  </nav>
+
+  <!-- 今日 -->
+  <section id="home" class="active">
+    <div class="card">
+      <h2>进食 / 禁食状态</h2>
+      <div class="status"><span class="big" id="fast-state"></span><span id="fast-pill" class="pill"></span></div>
+      <div class="bar"><div id="fast-bar" style="width:0"></div></div>
+      <p class="muted" id="fast-note"></p>
+    </div>
+
+    <div class="card">
+      <h2>今日作息建议</h2>
+      <ul class="timeline" id="timeline"></ul>
+    </div>
+
+    <div class="card">
+      <h2>每日打卡 <span class="muted" id="check-count"></span></h2>
+      <div id="checklist"></div>
+    </div>
+
+    <div class="card">
+      <h2>今日小贴士 <button class="link" id="next-tip" style="float:right;font-size:13px">换一条</button></h2>
+      <div class="tip" id="tip"></div>
+    </div>
+  </section>
+
+  <!-- 记录 -->
+  <section id="log">
+    <div class="card">
+      <h2>记录今天的数据</h2>
+      <div class="grid">
+        <label class="field">睡眠时长（小时）<input type="number" id="f-sleep" min="0" max="16" step="0.5"></label>
+        <label class="field">睡眠质量
+          <select id="f-quality"><option value="">—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+        </label>
+        <label class="field">运动（分钟）<input type="number" id="f-exercise" min="0" max="600" step="5"></label>
+        <label class="field">手机使用（分钟）<input type="number" id="f-screen" min="0" max="1440" step="5"></label>
+        <label class="field">早晨日照（分钟）<input type="number" id="f-sun" min="0" max="240" step="1"></label>
+        <label class="field">心情
+          <select id="f-mood"><option value="">—</option><option value="1">1 很差</option><option value="2">2 较差</option><option value="3">3 一般</option><option value="4">4 不错</option><option value="5">5 很好</option></select>
+        </label>
+      </div>
+      <button class="primary" id="save-log">保存</button>
+      <span class="muted" id="save-msg" style="margin-left:10px"></span>
+    </div>
+    <div class="card">
+      <h2>根据今天数据的建议</h2>
+      <ul class="advice" id="advice"></ul>
+    </div>
+  </section>
+
+  <!-- 回顾 -->
+  <section id="review">
+    <div class="card">
+      <h2>最近 7 天</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>日期</th><th>睡眠</th><th>运动</th><th>手机</th><th>日照</th><th>心情</th><th>打卡</th></tr></thead>
+          <tbody id="history"></tbody>
+        </table>
+      </div>
+      <p class="muted" id="summary"></p>
+    </div>
+    <div class="card">
+      <h2>数据管理</h2>
+      <p class="muted">所有数据只保存在本机浏览器中。</p>
+      <button class="link" id="export">导出 JSON</button> ·
+      <button class="link" id="reset">清空所有数据</button>
+    </div>
+  </section>
+
+  <!-- 设置 -->
+  <section id="settings">
+    <div class="card">
+      <h2>作息设置</h2>
+      <div class="grid">
+        <label class="field">起床时间<input type="time" id="s-wake"></label>
+        <label class="field">入睡时间<input type="time" id="s-sleep"></label>
+        <label class="field">进食窗口开始<input type="time" id="s-eat-start"></label>
+        <label class="field">进食窗口（小时）<input type="number" id="s-eat-hours" min="4" max="16" step="1"></label>
+        <label class="field">咖啡截止时间<input type="time" id="s-caffeine"></label>
+      </div>
+      <p class="muted">文章建议：起床后至少 1 小时再吃东西，睡前 2–3 小时停止进食；进阶可把进食窗口逐步缩短到 8 小时（如 10–18 点或 12–20 点），并尽量保持每天稳定。咖啡因的影响因人而异，截止时间可根据自己的情况调整。</p>
+      <button class="primary" id="save-settings">保存设置</button>
+      <span class="muted" id="settings-msg" style="margin-left:10px"></span>
+    </div>
+  </section>
+
+  <footer>
+    内容整理自本仓库的文章（主要来源为 Andrew Huberman 等人的 podcast）。仅供参考，不能替代医生的专业意见；任何饮食、补充剂或药物调整请先咨询医生。
+  </footer>
+</main>
+
+<script>
+(() => {
+  const STORE_KEY = 'health-assistant-v1';
+
+  const DEFAULT_SETTINGS = {
+    wake: '07:00', sleep: '23:00', eatStart: '10:00', eatHours: 8, caffeine: '14:00',
+  };
+
+  // 每日打卡项，来自文章中的实践建议
+  const HABITS = [
+    { id: 'sun',       text: '起床后到户外晒太阳 2–10 分钟', note: '睡眠 · 实践' },
+    { id: 'firstmeal', text: '起床后至少 1 小时再吃东西',   note: '饮食 · Fasting' },
+    { id: 'window',    text: '在进食窗口内吃完所有食物',     note: '饮食 · Fasting' },
+    { id: 'sugar',     text: '减少糖分摄入',               note: '健康生活四原则' },
+    { id: 'exercise',  text: '做一点运动',                 note: '健康生活四原则' },
+    { id: 'focus',     text: '至少一段不被打扰的专注时间',   note: '学习与专注' },
+    { id: 'phone',     text: '手机使用少于 2 小时',          note: '学习与专注' },
+    { id: 'nolight',   text: '晚上 11 点后不看屏幕、少开灯', note: '睡眠 · 实践' },
+    { id: 'nosmoke',   text: '不吸烟',                     note: '健康生活四原则' },
+  ];
+
+  const TIPS = [
+    ['户外日光的效果最好。隔着窗户接收日光强度会降低 50% 以上，想达到同样效果需要长得多的时间。', '睡眠 · 实践'],
+    ['晚上 11 点到凌晨 4 点之间接触光源会抑制之后几天的多巴胺释放，影响心情、专注和代谢。', '睡眠 · 实践'],
+    ['如果晚上必须开灯，位置低、昏暗的红光或烛光相对更好。', '睡眠 · 实践'],
+    ['傍晚看看落日有助于之后入睡，甚至能减轻晚上接触光照的负面影响。', '睡眠 · 实践'],
+    ['午后精神低谷时，可以尝试午睡，或 Yoga Nidra、冥想等非睡眠深度休息。', '睡眠 · 实践'],
+    ['早上洗冷水澡会让体温快速上升，把生物钟往前移；晚上锻炼则会延后生物钟。', '睡眠 · 实践'],
+    ['晚餐吃点淀粉、白肉等富含色氨酸的食物，会让人更平静、容易入睡。', '睡眠 · 实践'],
+    ['对绝大多数人来说，6–8 小时的睡眠时长是比较健康的。', '睡眠 · 实践'],
+    ['喝水、茶、不加奶的咖啡不会中断禁食，但一勺糖就会。', '饮食 · Fasting 的实践'],
+    ['饭后散步等轻量运动可以加快血糖清理，更快进入禁食状态。', '饮食 · Fasting 的实践'],
+    ['禁食期间如果头晕或发抖，可以先喝点盐水（可加柠檬汁），通常就能缓解。', '饮食 · Fasting 的实践'],
+    ['想缩短进食窗口时，逐步调整：每两天缩短 1 小时，慢慢达到 8 小时。', '饮食 · Fasting 的实践'],
+    ['进食窗口的稳定性很重要，经常变动的效果类似频繁倒时差。', '饮食 · Fasting 的实践'],
+    ['想增肌的话，可以把进食窗口往前移，早上摄入蛋白质对肌肉增长有益。', '饮食 · Fasting 的实践'],
+    ['给常做的事情加一点随机性（今天听不听音乐、带不带手机），能让多巴胺保持可持续。', '心态与动力'],
+    ['把任务拆成小里程碑，让过程本身带来激励，有助于保持专注。', '学习与专注 · 提升专注'],
+    ['限制视野范围可以提升专注，比如关掉任务栏的消息提醒。', '学习与专注 · 提升专注'],
+    ['显示器至少放在鼻子高度以上：视线向上让人更警觉，向下更容易放松、犯困。', '学习与专注 · 提升专注'],
+    ['频繁的信息切换（比如刷短视频）会损伤注意力，成年人每天手机时间建议少于 120 分钟。', '学习与专注 · 提升专注'],
+    ['一次 17 分钟的冥想就可能长期改善注意力，值得试一试。', '学习与专注 · 提升专注'],
+    ['保持睡眠、不吸烟、每天运动、少吃糖——做到这四点，就已经是不错的健康状态了。', '健康生活四原则'],
+    ['肥胖和吸烟都会加速衰老；没有必要时，尽量避免 X 光检查。', '长寿 · 实践'],
+  ];
+
+  // ---------- 存储 ----------
+  function load() {
+    try {
+      const data = JSON.parse(localStorage.getItem(STORE_KEY));
+      if (data && typeof data === 'object') {
+        return { settings: { ...DEFAULT_SETTINGS, ...data.settings }, days: data.days || {} };
+      }
+    } catch (e) { /* 忽略，使用默认值 */ }
+    return { settings: { ...DEFAULT_SETTINGS }, days: {} };
+  }
+  function save() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* 存储不可用 */ }
+  }
+  const state = load();
+
+  // ---------- 时间工具 ----------
+  const pad = n => String(n).padStart(2, '0');
+  const dateKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const toMin = hhmm => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+  const fmtMin = m => { m = ((m % 1440) + 1440) % 1440; return `${pad(Math.floor(m / 60))}:${pad(m % 60)}`; };
+  const fmtDur = m => { m = Math.max(0, Math.round(m)); const h = Math.floor(m / 60); return h ? `${h} 小时 ${m % 60} 分` : `${m} 分钟`; };
+  const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+  // 从 a 到 b 顺时针经过的分钟数（跨午夜）
+  const span = (a, b) => ((b - a) % 1440 + 1440) % 1440;
+
+  const todayKey = () => dateKey(new Date());
+  function day(key = todayKey()) {
+    if (!state.days[key]) state.days[key] = { checks: {}, log: {} };
+    return state.days[key];
+  }
+
+  // ---------- 导航 ----------
+  document.querySelectorAll('nav button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b === btn));
+      document.querySelectorAll('main > section').forEach(s => s.classList.toggle('active', s.id === btn.dataset.tab));
+      if (btn.dataset.tab === 'review') renderHistory();
+      if (btn.dataset.tab === 'log') renderLogForm();
+    });
+  });
+
+  // ---------- 禁食状态 ----------
+  function renderFasting() {
+    const s = state.settings;
+    const start = toMin(s.eatStart);
+    const len = Math.min(Math.max(Number(s.eatHours) || 8, 1), 23) * 60;
+    const end = (start + len) % 1440;
+    const now = nowMin();
+    const sinceStart = span(start, now);
+    const stateEl = document.getElementById('fast-state');
+    const pill = document.getElementById('fast-pill');
+    const bar = document.getElementById('fast-bar');
+    const note = document.getElementById('fast-note');
+
+    if (sinceStart < len) {
+      stateEl.textContent = '进食窗口中';
+      pill.textContent = `还剩 ${fmtDur(len - sinceStart)}`;
+      pill.className = 'pill';
+      bar.style.width = `${(sinceStart / len) * 100}%`;
+      note.textContent = `窗口 ${fmtMin(start)}–${fmtMin(end)}。窗口结束前吃完，饭后散步能帮助更快进入禁食状态。`;
+    } else {
+      const fastLen = 1440 - len;
+      const fasted = sinceStart - len;
+      stateEl.textContent = '禁食中';
+      pill.textContent = `已禁食 ${fmtDur(fasted)}`;
+      pill.className = 'pill warn';
+      bar.style.width = `${(fasted / fastLen) * 100}%`;
+      note.textContent = `距离下次进食（${fmtMin(start)}）还有 ${fmtDur(fastLen - fasted)}。水、茶、黑咖啡不会中断禁食。`;
+    }
+  }
+
+  // ---------- 作息时间线 ----------
+  function buildTimeline() {
+    const s = state.settings;
+    const wake = toMin(s.wake), sleep = toMin(s.sleep);
+    const eatStart = toMin(s.eatStart);
+    const eatEnd = eatStart + (Number(s.eatHours) || 8) * 60;
+    const awake = span(wake, sleep);
+    const items = [
+      [wake, '起床，尽快到户外接触阳光 2–10 分钟'],
+      [wake + 30, '适合运动的时间点之一（醒来后 30 分钟）'],
+      [wake + 60, '最早进食时间（起床后至少 1 小时）'],
+      [eatStart, `进食窗口开始（${s.eatHours} 小时）`],
+      [wake + 180, '适合运动的时间点之一（醒来后 3 小时）'],
+      [wake + Math.round(awake / 2), '可能出现精神低谷，可以午睡、Yoga Nidra 或冥想'],
+      [toMin(s.caffeine), '建议的咖啡因截止时间（因人而异）'],
+      [wake + 660, '适合运动的时间点之一（醒来后 11 小时）'],
+      [eatEnd, '进食窗口结束，饭后可以散散步'],
+      [sleep - 180, '睡前 3 小时：尽量不再进食；晚餐可以吃些淀粉、白肉'],
+      [sleep - 60, '调暗灯光，减少屏幕，必要时用低位暖光/红光'],
+      [sleep, '入睡，目标睡眠 6–8 小时'],
+    ];
+    // 以起床时间为起点排序，处理跨午夜
+    return items
+      .map(([t, text]) => ({ t: ((t % 1440) + 1440) % 1440, text, order: span(wake, t) }))
+      .sort((a, b) => a.order - b.order);
+  }
+
+  function renderTimeline() {
+    const items = buildTimeline();
+    const now = span(toMin(state.settings.wake), nowMin());
+    let current = -1;
+    items.forEach((it, i) => { if (it.order <= now) current = i; });
+    const ul = document.getElementById('timeline');
+    ul.innerHTML = '';
+    items.forEach((it, i) => {
+      const li = document.createElement('li');
+      if (i === current) li.className = 'now';
+      li.innerHTML = `<span class="t">${fmtMin(it.t)}</span><span></span>`;
+      li.lastChild.textContent = it.text;
+      ul.appendChild(li);
+    });
+  }
+
+  // ---------- 打卡 ----------
+  function streak(habitId) {
+    let n = 0;
+    const d = new Date();
+    // 今天还没打卡时，从昨天开始算
+    if (!day(dateKey(d)).checks[habitId]) d.setDate(d.getDate() - 1);
+    while (state.days[dateKey(d)] && state.days[dateKey(d)].checks[habitId]) {
+      n++; d.setDate(d.getDate() - 1);
+    }
+    return n;
+  }
+
+  function renderChecklist() {
+    const checks = day().checks;
+    const box = document.getElementById('checklist');
+    box.innerHTML = '';
+    HABITS.forEach(h => {
+      const row = document.createElement('label');
+      row.className = 'check';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = !!checks[h.id];
+      input.addEventListener('change', () => {
+        day().checks[h.id] = input.checked;
+        save();
+        renderChecklist();
+      });
+      const text = document.createElement('span');
+      text.innerHTML = `<div></div><div class="muted"></div>`;
+      text.firstChild.textContent = h.text;
+      text.lastChild.textContent = h.note;
+      const st = document.createElement('span');
+      st.className = 'streak';
+      const n = streak(h.id);
+      st.textContent = n > 1 ? `连续 ${n} 天` : '';
+      row.append(input, text, st);
+      box.appendChild(row);
+    });
+    const done = HABITS.filter(h => checks[h.id]).length;
+    document.getElementById('check-count').textContent = `${done}/${HABITS.length}`;
+  }
+
+  // ---------- 小贴士 ----------
+  let tipIndex = Math.floor(new Date(todayKey()).getTime() / 864e5) % TIPS.length;
+  function renderTip() {
+    const [text, src] = TIPS[tipIndex];
+    const el = document.getElementById('tip');
+    el.innerHTML = '<span></span><span class="src muted"></span>';
+    el.firstChild.textContent = text;
+    el.lastChild.textContent = `出自：${src}`;
+  }
+  document.getElementById('next-tip').addEventListener('click', () => {
+    tipIndex = (tipIndex + 1) % TIPS.length;
+    renderTip();
+  });
+
+  // ---------- 记录 ----------
+  const LOG_FIELDS = { sleep: 'f-sleep', quality: 'f-quality', exercise: 'f-exercise', screen: 'f-screen', sun: 'f-sun', mood: 'f-mood' };
+
+  function renderLogForm() {
+    const log = day().log;
+    Object.entries(LOG_FIELDS).forEach(([k, id]) => {
+      document.getElementById(id).value = log[k] ?? '';
+    });
+    renderAdvice();
+  }
+
+  document.getElementById('save-log').addEventListener('click', () => {
+    const log = {};
+    Object.entries(LOG_FIELDS).forEach(([k, id]) => {
+      const v = document.getElementById(id).value;
+      if (v !== '') log[k] = Number(v);
+    });
+    day().log = log;
+    save();
+    const msg = document.getElementById('save-msg');
+    msg.textContent = '已保存';
+    setTimeout(() => { msg.textContent = ''; }, 1500);
+    renderAdvice();
+  });
+
+  function renderAdvice() {
+    const log = day().log;
+    const out = [];
+    if (log.sleep != null) {
+      if (log.sleep < 6) out.push('睡眠不足 6 小时。今晚试着提前上床，睡前一小时调暗灯光、远离屏幕。');
+      else if (log.sleep > 9) out.push('睡眠超过 9 小时。如果经常如此且仍感疲惫，可以留意一下睡眠质量。');
+      else out.push('睡眠时长在 6–8 小时左右的健康范围内，继续保持。');
+    }
+    if (log.quality != null && log.quality <= 2) {
+      out.push('睡眠质量偏低：早上多晒太阳、晚上少接触光源，并留意咖啡因截止时间和晚间运动是否离睡觉太近。');
+    }
+    if (log.sun != null && log.sun < 2) {
+      out.push('早晨日照不足。明天起床后到户外待 2–10 分钟（阴天需要更久），隔着窗户效果会差很多。');
+    }
+    if (log.exercise != null) {
+      if (log.exercise === 0) out.push('今天还没运动，哪怕饭后散步 10–15 分钟也有帮助（还能加快血糖清理）。');
+      else if (log.exercise >= 30) out.push(`运动了 ${log.exercise} 分钟，很棒！如果是晚上运动，注意别离睡觉太近。`);
+    }
+    if (log.screen != null && log.screen > 120) {
+      out.push(`手机使用 ${log.screen} 分钟，超过了成年人建议的 120 分钟。可以打开专注模式、关闭非必要通知。`);
+    }
+    if (log.mood != null && log.mood <= 2) {
+      out.push('心情不太好：试试户外晒太阳、运动，或一次 Yoga Nidra/冥想。如果持续低落，请及时寻求专业帮助。');
+    }
+    const ul = document.getElementById('advice');
+    ul.innerHTML = '';
+    if (!out.length) out.push('填写并保存今天的数据后，这里会给出建议。');
+    out.forEach(t => { const li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
+  }
+
+  // ---------- 回顾 ----------
+  function renderHistory() {
+    const tbody = document.getElementById('history');
+    tbody.innerHTML = '';
+    const rows = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const key = dateKey(d);
+      const rec = state.days[key] || { checks: {}, log: {} };
+      rows.push({ key, rec });
+      const done = HABITS.filter(h => rec.checks[h.id]).length;
+      const l = rec.log || {};
+      const cell = v => (v == null ? '—' : v);
+      const tr = document.createElement('tr');
+      tr.innerHTML = [
+        `${d.getMonth() + 1}/${d.getDate()}${i === 0 ? ' 今天' : ''}`,
+        cell(l.sleep != null ? `${l.sleep}h` : null),
+        cell(l.exercise != null ? `${l.exercise}m` : null),
+        cell(l.screen != null ? `${l.screen}m` : null),
+        cell(l.sun != null ? `${l.sun}m` : null),
+        cell(l.mood),
+        `${done}/${HABITS.length}`,
+      ].map((v, j) => `<td class="${j ? 'num' : ''}">${v}</td>`).join('');
+      tbody.appendChild(tr);
+    }
+    const avg = k => {
+      const vals = rows.map(r => r.rec.log && r.rec.log[k]).filter(v => v != null);
+      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    };
+    const parts = [];
+    const s = avg('sleep'), e = avg('exercise'), sc = avg('screen');
+    if (s != null) parts.push(`平均睡眠 ${s.toFixed(1)} 小时`);
+    if (e != null) parts.push(`平均运动 ${Math.round(e)} 分钟/天`);
+    if (sc != null) parts.push(`平均手机 ${Math.round(sc)} 分钟/天`);
+    document.getElementById('summary').textContent = parts.length ? parts.join('，') + '。' : '还没有记录数据。';
+  }
+
+  document.getElementById('export').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `health-assistant-${todayKey()}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  document.getElementById('reset').addEventListener('click', () => {
+    if (!confirm('确定清空所有打卡和记录吗？此操作无法撤销。')) return;
+    state.days = {};
+    save();
+    renderAll();
+    renderHistory();
+  });
+
+  // ---------- 设置 ----------
+  function renderSettings() {
+    const s = state.settings;
+    document.getElementById('s-wake').value = s.wake;
+    document.getElementById('s-sleep').value = s.sleep;
+    document.getElementById('s-eat-start').value = s.eatStart;
+    document.getElementById('s-eat-hours').value = s.eatHours;
+    document.getElementById('s-caffeine').value = s.caffeine;
+  }
+  document.getElementById('save-settings').addEventListener('click', () => {
+    const get = id => document.getElementById(id).value;
+    const hours = Math.min(Math.max(Number(get('s-eat-hours')) || 8, 4), 16);
+    state.settings = {
+      wake: get('s-wake') || DEFAULT_SETTINGS.wake,
+      sleep: get('s-sleep') || DEFAULT_SETTINGS.sleep,
+      eatStart: get('s-eat-start') || DEFAULT_SETTINGS.eatStart,
+      eatHours: hours,
+      caffeine: get('s-caffeine') || DEFAULT_SETTINGS.caffeine,
+    };
+    save();
+    renderSettings();
+    renderAll();
+    const s = state.settings;
+    const warn = [];
+    if (span(toMin(s.wake), toMin(s.eatStart)) < 60) warn.push('进食窗口开始时间距起床不足 1 小时');
+    if (span(toMin(s.eatStart) + hours * 60, toMin(s.sleep)) < 120) warn.push('进食窗口结束时间距入睡不足 2 小时');
+    const sleepLen = span(toMin(s.sleep), toMin(s.wake)) / 60;
+    if (sleepLen < 6) warn.push(`计划睡眠只有 ${sleepLen.toFixed(1)} 小时`);
+    const msg = document.getElementById('settings-msg');
+    msg.textContent = warn.length ? `已保存。注意：${warn.join('；')}。` : '已保存';
+  });
+
+  // ---------- 启动 ----------
+  function renderAll() {
+    const d = new Date();
+    const week = '日一二三四五六'[d.getDay()];
+    document.getElementById('today').textContent = `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日 · 星期${week}`;
+    renderFasting();
+    renderTimeline();
+    renderChecklist();
+    renderTip();
+  }
+
+  let lastDay = todayKey();
+  renderSettings();
+  renderAll();
+  renderLogForm();
+  setInterval(() => {
+    // 跨天时刷新全部内容
+    if (todayKey() !== lastDay) { lastDay = todayKey(); renderAll(); renderLogForm(); }
+    else { renderFasting(); renderTimeline(); }
+  }, 60 * 1000);
+})();
+</script>
+</body>
+</html>
