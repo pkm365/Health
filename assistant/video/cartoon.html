@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小健的健康小招</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1d2320; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { height: 100vh; max-width: 100vw; aspect-ratio: 9 / 16; object-fit: contain; cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="c" width="720" height="1280"></canvas>
+<script>
+// 每一帧都由 render(t) 按时间绘制，既可在浏览器里直接播放，也可逐帧导出成视频（见 render.js）。
+const W = 720, H = 1280;
+const ctx = document.getElementById('c').getContext('2d');
+const FONT = '"WenQuanYi Zen Hei", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif';
+const BODY = '#6fd19f', BODY_DARK = '#3f9f70', OUT = '#24533d';
+const TAU = Math.PI * 2;
+
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const easeOut = t => 1 - Math.pow(1 - clamp(t), 3);
+const backOut = t => { t = clamp(t); const c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+function mixColor(a, b, t) {
+  const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const [x, y] = [p(a), p(b)];
+  return `rgb(${x.map((v, i) => Math.round(lerp(v, y[i], clamp(t)))).join(',')})`;
+}
+// 可复现的伪随机数
+function rng(seed) {
+  return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+// ---------- 基础图形 ----------
+function vGradient(top, bottom, y0 = 0, y1 = H) {
+  const g = ctx.createLinearGradient(0, y0, 0, y1);
+  g.addColorStop(0, top); g.addColorStop(1, bottom);
+  ctx.fillStyle = g; ctx.fillRect(0, y0, W, y1 - y0);
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, r);
+}
+function circle(x, y, r, fill, stroke, lw = 6) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, TAU);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+function text(str, x, y, size, color, weight = 'bold', align = 'center', maxW = 0) {
+  let s = size;
+  ctx.font = `${weight} ${s}px ${FONT}`;
+  while (maxW && ctx.measureText(str).width > maxW && s > 16) { s -= 2; ctx.font = `${weight} ${s}px ${FONT}`; }
+  ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.fillText(str, x, y);
+}
+function cloud(x, y, s, alpha = 0.95) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = '#fff';
+  [[0, 0, 40], [40, -18, 50], [90, 0, 40], [45, 12, 42]].forEach(([dx, dy, r]) => {
+    ctx.beginPath(); ctx.arc(x + dx * s, y + dy * s, r * s, 0, TAU); ctx.fill();
+  });
+  ctx.restore();
+}
+function hills(color1, color2) {
+  ctx.fillStyle = color2;
+  ctx.beginPath(); ctx.ellipse(120, 980, 420, 170, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = color1;
+  ctx.beginPath(); ctx.ellipse(600, 1010, 460, 190, 0, 0, TAU); ctx.fill();
+  ctx.fillRect(0, 960, W, H - 960);
+}
+function sun(x, y, r, spin) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(spin);
+  ctx.strokeStyle = '#ffb938'; ctx.lineWidth = 10; ctx.lineCap = 'round';
+  for (let i = 0; i < 12; i++) {
+    ctx.rotate(TAU / 12);
+    ctx.beginPath(); ctx.moveTo(r + 16, 0); ctx.lineTo(r + 44, 0); ctx.stroke();
+  }
+  ctx.restore();
+  const g = ctx.createRadialGradient(x, y, r * 0.2, x, y, r);
+  g.addColorStop(0, '#fff3a6'); g.addColorStop(1, '#ffc53d');
+  circle(x, y, r, g, '#f5a524', 6);
+}
+function heart(x, y, s, color = '#ff6b81') {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.fillStyle = color;
+  ctx.beginPath(); ctx.moveTo(0, 12);
+  ctx.bezierCurveTo(-26, -8, -12, -30, 0, -14);
+  ctx.bezierCurveTo(12, -30, 26, -8, 0, 12);
+  ctx.fill(); ctx.restore();
+}
+function check(x, y, s, color = '#fff') {
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 7 * s; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(x - 12 * s, y); ctx.lineTo(x - 3 * s, y + 10 * s); ctx.lineTo(x + 14 * s, y - 10 * s); ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- 主角：小健 ----------
+// raiseL / raiseR：手臂抬起角度（弧度，正数向上）
+function buddy(x, y, s, o = {}) {
+  const { raiseL = -0.7, raiseR = -0.7, eyes = 'open', mouth = 'smile', legL = 0, legR = 0,
+          look = 0, lookY = 0, squash = 1, cap = false, legs = true } = o;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s * squash);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (legs) {
+    [[-38, legL], [38, legR]].forEach(([dx, a]) => {
+      ctx.save(); ctx.translate(dx, 70); ctx.rotate(a);
+      ctx.strokeStyle = OUT; ctx.lineWidth = 12;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 62); ctx.stroke();
+      ctx.fillStyle = OUT; ctx.beginPath(); ctx.ellipse(dx > 0 ? 10 : -10, 66, 20, 11, 0, 0, TAU); ctx.fill();
+      ctx.restore();
+    });
+  }
+  [[-1, raiseL], [1, raiseR]].forEach(([side, r]) => {
+    ctx.save(); ctx.translate(side * 90, 12); ctx.rotate(side < 0 ? r : -r);
+    ctx.strokeStyle = OUT; ctx.lineWidth = 12;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(side * 58, 0); ctx.stroke();
+    circle(side * 64, 0, 15, BODY, OUT, 6);
+    ctx.restore();
+  });
+  // 身体
+  const g = ctx.createRadialGradient(-30, -40, 20, 0, 0, 120);
+  g.addColorStop(0, '#9ef0c2'); g.addColorStop(1, BODY);
+  ctx.beginPath(); ctx.ellipse(0, 0, 104, 98, 0, 0, TAU);
+  ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = OUT; ctx.lineWidth = 7; ctx.stroke();
+  // 头顶的小叶子
+  ctx.save(); ctx.translate(0, -96); ctx.rotate(Math.sin(y * 0.02) * 0.1);
+  ctx.strokeStyle = OUT; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(4, -24); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(4, -22); ctx.quadraticCurveTo(40, -58, 58, -30); ctx.quadraticCurveTo(30, -8, 4, -22);
+  ctx.fillStyle = '#8be08f'; ctx.fill(); ctx.stroke();
+  ctx.restore();
+  // 睡帽
+  if (cap) {
+    ctx.beginPath(); ctx.moveTo(-80, -58); ctx.quadraticCurveTo(0, -120, 80, -58);
+    ctx.quadraticCurveTo(60, -150, 130, -160); ctx.quadraticCurveTo(10, -170, -80, -58);
+    ctx.fillStyle = '#5b7cff'; ctx.fill(); ctx.strokeStyle = OUT; ctx.lineWidth = 6; ctx.stroke();
+    circle(132, -160, 18, '#fff', OUT, 5);
+  }
+  // 脸
+  const ex = look * 8, ey = lookY * 6;
+  [-36, 36].forEach(dx => {
+    ctx.strokeStyle = OUT; ctx.lineWidth = 7;
+    if (eyes === 'open') {
+      ctx.beginPath(); ctx.ellipse(dx, -18, 19, 24, 0, 0, TAU); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 5; ctx.stroke();
+      circle(dx + ex, -14 + ey, 11, '#1b2a22');
+      circle(dx + ex + 4, -19 + ey, 4, '#fff');
+    } else if (eyes === 'happy') {
+      ctx.beginPath(); ctx.arc(dx, -10, 16, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.arc(dx, -20, 16, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
+    }
+  });
+  ctx.globalAlpha = 0.55; circle(-66, 16, 15, '#ff8fa3'); circle(66, 16, 15, '#ff8fa3'); ctx.globalAlpha = 1;
+  ctx.strokeStyle = OUT; ctx.lineWidth = 6;
+  if (mouth === 'smile') { ctx.beginPath(); ctx.arc(0, 18, 20, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke(); }
+  else if (mouth === 'open') {
+    ctx.beginPath(); ctx.moveTo(-24, 18); ctx.quadraticCurveTo(0, 62, 24, 18); ctx.closePath();
+    ctx.fillStyle = '#7a2b35'; ctx.fill(); ctx.stroke();
+    ctx.save(); ctx.clip(); circle(0, 42, 12, '#ff7b8a'); ctx.restore();
+  } else if (mouth === 'o') { ctx.beginPath(); ctx.ellipse(0, 30, 9, 11, 0, 0, TAU); ctx.fillStyle = '#7a2b35'; ctx.fill(); ctx.stroke(); }
+  else if (mouth === 'flat') { ctx.beginPath(); ctx.moveTo(-14, 28); ctx.lineTo(14, 28); ctx.stroke(); }
+  ctx.restore();
+}
+const blink = (t, every = 3.1) => (t % every) < 0.12 ? 'closed' : 'open';
+
+// ---------- 字幕 / 标签 ----------
+function caption(title, sub, lt) {
+  const a = easeOut((lt - 0.25) / 0.5);
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a; ctx.translate(0, (1 - a) * 60);
+  ctx.shadowColor = 'rgba(0,0,0,0.18)'; ctx.shadowBlur = 24; ctx.shadowOffsetY = 8;
+  roundRect(36, 986, W - 72, 214, 40); ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.fill();
+  ctx.shadowColor = 'transparent';
+  text(title, W / 2, 1062, 54, '#1f2a24', 'bold', 'center', W - 130);
+  text(sub, W / 2, 1136, 32, '#4b5a52', 'normal', 'center', W - 130);
+  ctx.restore();
+}
+function tag(label, lt, step) {
+  if (!label) return;
+  const a = easeOut(lt / 0.4);
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.font = `bold 30px ${FONT}`;
+  const w = ctx.measureText(label).width + 56;
+  roundRect(W / 2 - w / 2, 64, w, 58, 29); ctx.fillStyle = 'rgba(36,83,61,0.88)'; ctx.fill();
+  text(label, W / 2, 94, 30, '#fff');
+  if (step) {
+    for (let i = 1; i <= 5; i++) circle(W / 2 - 60 + (i - 1) * 30, 150, 8, i <= step ? '#2f7d5b' : 'rgba(36,83,61,0.25)');
+  }
+  ctx.restore();
+}
+
+// ---------- 场景 ----------
+const SCENES = [
+  { d: 5, tag: '', title: '嗨！我是小健', sub: '每天健康一点点，一起加油吧', draw: lt => {
+      vGradient('#bfe6ff', '#fff4d6');
+      cloud(90 + lt * 12, 260, 1); cloud(470 - lt * 8, 380, 0.8);
+      hills('#8fd694', '#a8e6a1');
+      const y = lerp(1400, 700, backOut(lt / 0.9));
+      const wave = lt > 0.9 ? 1.1 + 0.45 * Math.sin((lt - 0.9) * 10) : -0.7;
+      buddy(W / 2, y, 1.55, { raiseR: wave, eyes: lt > 0.9 ? blink(lt) : 'happy', mouth: lt > 0.9 ? 'open' : 'smile' });
+      const b = backOut((lt - 1.2) / 0.4);
+      if (b > 0) {
+        ctx.save(); ctx.translate(560, 380); ctx.scale(b, b);
+        roundRect(-80, -50, 160, 100, 36); ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = OUT; ctx.lineWidth = 5; ctx.stroke();
+        text('嗨！', 0, 0, 44, OUT);
+        ctx.restore();
+      }
+  } },
+  { d: 7, tag: '第 1 招 · 晨光', step: 1, title: '起床先晒太阳', sub: '到户外 2–10 分钟，唤醒一整天', draw: lt => {
+      const p = easeOut(lt / 3.5);
+      vGradient(mixColor('#ffb48a', '#8fd3ff', p), mixColor('#ffe6b8', '#e3f6ff', p));
+      sun(540, lerp(900, 320, p), 80, lt * 0.4);
+      cloud(60 + lt * 10, 330, 0.9); cloud(380 + lt * 6, 470, 0.6, 0.8);
+      hills('#7ccf85', '#9fe0a0');
+      const awake = lt > 1.8;
+      const stretch = awake ? 1.2 + 0.25 * Math.sin(lt * 4) : -0.4 + lt * 0.2;
+      buddy(300, 720 + (awake ? Math.sin(lt * 4) * -6 : 0), 1.3, {
+        raiseL: stretch, raiseR: stretch,
+        eyes: awake ? 'happy' : 'closed', mouth: awake ? 'open' : 'o', squash: awake ? 1 + 0.03 * Math.sin(lt * 4) : 1,
+      });
+      // 阳光照在身上的光点
+      if (awake) for (let i = 0; i < 5; i++) {
+        const k = ((lt * 0.8 + i / 5) % 1);
+        ctx.globalAlpha = 1 - k; circle(lerp(520, 330, k), lerp(340, 640, k), 8, '#ffd84d'); ctx.globalAlpha = 1;
+      }
+  } },
+  { d: 7, tag: '第 2 招 · 饮食', step: 2, title: '规律吃饭，少吃糖', sub: '8 小时进食窗口，水和茶不打断禁食', draw: lt => {
+      vGradient('#fff6dc', '#ffe9c2');
+      // 时钟：绿色弧线是 10 点到 18 点的进食窗口
+      const cx = 180, cy = 360, r = 118;
+      circle(cx, cy, r + 10, '#fff', OUT, 8);
+      const ang = h => (h % 12) / 12 * TAU - Math.PI / 2;
+      ctx.beginPath(); ctx.arc(cx, cy, r - 14, ang(10), ang(18) + TAU); ctx.strokeStyle = '#6fd19f'; ctx.lineWidth = 22; ctx.stroke();
+      for (let i = 0; i < 12; i++) { const a = i / 12 * TAU; circle(cx + Math.cos(a) * (r - 40), cy + Math.sin(a) * (r - 40), 5, OUT); }
+      const hour = lerp(10, 18, clamp(lt / 6));
+      ctx.save(); ctx.translate(cx, cy); ctx.rotate(ang(hour) + Math.PI / 2);
+      ctx.strokeStyle = OUT; ctx.lineWidth = 10; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -64); ctx.stroke();
+      ctx.restore(); circle(cx, cy, 10, OUT);
+      text('进食窗口 8 小时', cx, cy + r + 50, 30, OUT);
+      // 小健在吃蔬菜
+      const chew = Math.floor(lt / 0.25) % 2 === 0;
+      buddy(480, 700, 1.15, { raiseR: 0.25 + (chew ? 0.1 : 0), eyes: lt < 3.2 ? 'happy' : blink(lt), mouth: chew ? 'open' : 'smile', legs: false });
+      // 西兰花在手上
+      ctx.save(); ctx.translate(480 + 142, 700 - 20);
+      ctx.fillStyle = '#5a9e3a'; ctx.fillRect(-8, 0, 16, 40);
+      [[-18, -6], [0, -20], [18, -6], [0, 4]].forEach(([dx, dy]) => circle(dx, dy, 18, '#4caf50', '#2e7d32', 4));
+      ctx.restore();
+      // 桌子
+      ctx.fillStyle = '#c98b52'; ctx.fillRect(0, 840, W, 150); ctx.fillStyle = '#b07440'; ctx.fillRect(0, 840, W, 18);
+      // 盘子和食物
+      ctx.beginPath(); ctx.ellipse(480, 850, 150, 36, 0, 0, TAU); ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = '#d9d2c5'; ctx.lineWidth = 4; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(430, 836, 46, 20, -0.2, 0, TAU); ctx.fillStyle = '#ff9f43'; ctx.fill();
+      ctx.beginPath(); ctx.ellipse(535, 836, 52, 22, 0, 0, TAU); ctx.fillStyle = '#ffd6c9'; ctx.fill();
+      [[470, 822], [495, 830]].forEach(([x, y]) => circle(x, y, 14, '#4caf50'));
+      // 糖块被划掉
+      const sx = 150, sy = 700, sb = easeOut((lt - 0.6) / 0.4);
+      if (sb > 0) {
+        ctx.save(); ctx.translate(sx, sy); ctx.scale(sb, sb);
+        roundRect(-48, -48, 96, 96, 14); ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = '#c7c7c7'; ctx.lineWidth = 5; ctx.stroke();
+        text('糖', 0, 2, 46, '#9a9a9a');
+        const x = backOut((lt - 2.2) / 0.4);
+        if (x > 0) {
+          ctx.scale(x, x); circle(0, 0, 72, null, '#ff4d4f', 12);
+          ctx.beginPath(); ctx.moveTo(-50, -50); ctx.lineTo(50, 50); ctx.stroke();
+        }
+        ctx.restore();
+      }
+      // 一杯水
+      const wx = 640, wy = 580, wb = easeOut((lt - 3.5) / 0.4);
+      if (wb > 0) {
+        ctx.save(); ctx.globalAlpha = wb; ctx.translate(wx, wy);
+        ctx.beginPath(); ctx.moveTo(-34, -60); ctx.lineTo(34, -60); ctx.lineTo(26, 60); ctx.lineTo(-26, 60); ctx.closePath();
+        ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fill(); ctx.strokeStyle = '#7fb8e6'; ctx.lineWidth = 5; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-30, -20); ctx.lineTo(30, -20); ctx.lineTo(26, 58); ctx.lineTo(-26, 58); ctx.closePath();
+        ctx.fillStyle = 'rgba(94,179,255,0.55)'; ctx.fill();
+        text('水', 0, 20, 30, '#fff');
+        ctx.restore();
+      }
+  } },
+  { d: 7, tag: '第 3 招 · 运动', step: 3, title: '每天动一动', sub: '哪怕饭后散步 15 分钟也很棒', draw: lt => {
+      vGradient('#8fd3ff', '#e6f7ff');
+      sun(610, 250, 50, lt * 0.5);
+      cloud(((500 - lt * 40) % 900 + 900) % 900 - 150, 300, 0.8);
+      // 远处的树（视差滚动）
+      for (let i = 0; i < 5; i++) {
+        const x = ((i * 220 - lt * 160) % 1100 + 1100) % 1100 - 150;
+        ctx.fillStyle = '#8b5a2b'; ctx.fillRect(x - 10, 760, 20, 90);
+        circle(x, 740, 60, '#58b368'); circle(x - 34, 770, 42, '#4ea65d'); circle(x + 34, 770, 42, '#4ea65d');
+      }
+      ctx.fillStyle = '#86d17f'; ctx.fillRect(0, 840, W, H - 840);
+      ctx.fillStyle = '#d9c7a6'; ctx.fillRect(0, 880, W, 70);
+      ctx.fillStyle = '#fff';
+      for (let i = 0; i < 8; i++) ctx.fillRect(((i * 120 - lt * 420) % 960 + 960) % 960 - 120, 910, 60, 10);
+      const ph = lt * 13;
+      buddy(340, 720 - Math.abs(Math.sin(ph)) * 22, 1.15, {
+        legL: 0.75 * Math.sin(ph), legR: -0.75 * Math.sin(ph),
+        raiseL: -0.2 + 0.7 * Math.sin(ph), raiseR: -0.2 - 0.7 * Math.sin(ph),
+        eyes: 'happy', mouth: 'open', look: 1,
+      });
+      // 汗珠
+      for (let i = 0; i < 2; i++) {
+        const k = (lt * 1.3 + i * 0.5) % 1;
+        ctx.globalAlpha = 1 - k;
+        ctx.beginPath(); ctx.ellipse(230 - k * 40, 600 + k * 30, 9, 13, 0.3, 0, TAU); ctx.fillStyle = '#6ec6ff'; ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      // 飘起的爱心
+      for (let i = 0; i < 4; i++) {
+        const k = (lt * 0.6 + i / 4) % 1;
+        ctx.globalAlpha = 1 - k; heart(420 + Math.sin(k * 8 + i) * 30 + i * 30, 580 - k * 320, 1.2 + k); ctx.globalAlpha = 1;
+      }
+      // 步数
+      const steps = Math.floor(1200 + lt * 560).toLocaleString('en-US');
+      roundRect(470, 180, 210, 90, 24); ctx.fillStyle = 'rgba(255,255,255,0.92)'; ctx.fill();
+      text('今日步数', 575, 206, 22, '#4b5a52', 'normal');
+      text(steps, 575, 244, 36, '#2f7d5b');
+  } },
+  { d: 7, tag: '第 4 招 · 专注', step: 4, title: '放下手机，专注一会儿', sub: '每天手机时间少于 2 小时', draw: lt => {
+      vGradient('#eef0ff', '#dfe4ff');
+      // 窗户
+      roundRect(440, 200, 220, 200, 16); ctx.fillStyle = '#bfe6ff'; ctx.fill(); ctx.strokeStyle = '#9aa6d6'; ctx.lineWidth = 8; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(550, 200); ctx.lineTo(550, 400); ctx.moveTo(440, 300); ctx.lineTo(660, 300); ctx.stroke();
+      const put = easeOut((lt - 1.8) / 1.2);
+      buddy(400, 700, 1.15, {
+        raiseL: lt < 1.8 ? -0.2 : lerp(0.2, -0.3, put), raiseR: -0.3,
+        eyes: lt < 1.8 ? 'open' : blink(lt, 2.5), look: lt < 1.8 ? -1 : 0, lookY: lt > 3 ? 1 : 0,
+        mouth: lt < 1.8 ? 'flat' : 'smile', legs: false,
+      });
+      // 灯泡
+      const bulb = backOut((lt - 3.6) / 0.5);
+      if (bulb > 0) {
+        ctx.save(); ctx.translate(400, 470); ctx.scale(bulb, bulb);
+        ctx.globalAlpha = 0.35 + 0.15 * Math.sin(lt * 6); circle(0, 0, 70, '#fff3a6'); ctx.globalAlpha = 1;
+        circle(0, 0, 36, '#ffe066', '#e0a800', 5);
+        ctx.fillStyle = '#9aa6d6'; ctx.fillRect(-16, 34, 32, 20);
+        ctx.restore();
+      }
+      // 手机：震动后被收进盒子
+      const shake = lt < 1.8 ? Math.sin(lt * 60) * 6 : 0;
+      const px = lerp(150, 140, put), py = lerp(600, 840, put), ps = lerp(1, 0.55, put);
+      ctx.save(); ctx.translate(px + shake, py); ctx.scale(ps, ps);
+      roundRect(-50, -90, 100, 180, 18); ctx.fillStyle = '#2b2f3a'; ctx.fill();
+      roundRect(-42, -78, 84, 150, 10); ctx.fillStyle = lt < 1.8 ? '#6ec6ff' : '#3b4252'; ctx.fill();
+      if (lt < 1.8) { circle(42, -84, 24, '#ff4d4f'); text('99+', 42, -84, 20, '#fff'); }
+      ctx.restore();
+      // 桌子
+      ctx.fillStyle = '#a7b0d8'; ctx.fillRect(0, 840, W, 150); ctx.fillStyle = '#8f99c9'; ctx.fillRect(0, 840, W, 16);
+      // 手机盒
+      const bx = easeOut((lt - 1.2) / 0.5);
+      if (bx > 0) {
+        ctx.save(); ctx.globalAlpha = bx;
+        roundRect(60, 800, 170, 110, 14); ctx.fillStyle = '#f7c873'; ctx.fill(); ctx.strokeStyle = '#c9963c'; ctx.lineWidth = 5; ctx.stroke();
+        text('手机休息中', 145, 870, 24, '#7a5314');
+        ctx.restore();
+      }
+      // 打开的书
+      const bk = easeOut((lt - 2.8) / 0.5);
+      if (bk > 0) {
+        ctx.save(); ctx.translate(420, 820); ctx.scale(bk, bk);
+        ctx.fillStyle = '#fff'; ctx.strokeStyle = '#6b73a8'; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(-60, -24, -120, -6); ctx.lineTo(-120, 40); ctx.quadraticCurveTo(-60, 22, 0, 46); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(60, -24, 120, -6); ctx.lineTo(120, 40); ctx.quadraticCurveTo(60, 22, 0, 46); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
+      // 番茄钟
+      const left = Math.max(0, 25 * 60 - Math.floor(clamp((lt - 2.8) / 4) * 25 * 60 * 0.4));
+      if (lt > 2.8) {
+        roundRect(470, 440, 200, 84, 22); ctx.fillStyle = '#ff6b6b'; ctx.fill();
+        text(`${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`, 570, 484, 44, '#fff');
+      }
+  } },
+  { d: 7, tag: '第 5 招 · 睡眠', step: 5, title: '早点睡，睡足 6–8 小时', sub: '睡前调暗灯光，远离屏幕', draw: lt => {
+      vGradient('#0f1a3d', '#2c3d73');
+      const r = rng(7);
+      for (let i = 0; i < 40; i++) {
+        const x = r() * W, y = r() * 700 + 40, tw = 0.5 + 0.5 * Math.sin(lt * 3 + i);
+        ctx.globalAlpha = 0.3 + 0.7 * tw; circle(x, y, 2 + r() * 3, '#fff8d6'); ctx.globalAlpha = 1;
+      }
+      // 月亮
+      circle(560, 260, 70, '#fff3b0');
+      circle(595, 235, 64, '#16224a');
+      // 床
+      roundRect(90, 640, 40, 300, 12); ctx.fillStyle = '#8a6a4f'; ctx.fill();
+      const breath = 1 + 0.035 * Math.sin(lt * 2.2);
+      buddy(330, 700, 1.1, { eyes: 'closed', mouth: 'o', cap: true, squash: breath, legs: false, raiseL: -1, raiseR: -1 });
+      roundRect(120, 770, 520, 170, 40); ctx.fillStyle = '#7aa7ff'; ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      for (let i = 0; i < 6; i++) circle(170 + i * 85, 850 + (i % 2) * 30, 14);
+      roundRect(120, 770, 520, 36, 18); ctx.fillStyle = '#a9c6ff'; ctx.fill();
+      // 床头小红灯
+      const g = ctx.createRadialGradient(640, 660, 5, 640, 660, 120);
+      g.addColorStop(0, 'rgba(255,90,70,0.45)'); g.addColorStop(1, 'rgba(255,90,70,0)');
+      ctx.fillStyle = g; ctx.fillRect(500, 520, 220, 280);
+      circle(640, 660, 22, '#ff7a5c');
+      ctx.fillStyle = '#5a4636'; ctx.fillRect(632, 680, 16, 70); ctx.fillRect(600, 750, 80, 14);
+      // 时钟
+      roundRect(40, 190, 190, 80, 16); ctx.fillStyle = '#0a0f22'; ctx.fill();
+      text('23:00', 135, 232, 44, '#ff6b6b');
+      // Zzz
+      for (let i = 0; i < 3; i++) {
+        const k = (lt * 0.45 + i / 3) % 1;
+        ctx.globalAlpha = Math.sin(k * Math.PI);
+        text('Z', 430 + k * 120, 560 - k * 260, 34 + k * 40, '#dfe8ff');
+        ctx.globalAlpha = 1;
+      }
+  } },
+  { d: 7, tag: '健康四原则', title: '今天的你也很棒！', sub: '每天进步一点点，加油！', draw: lt => {
+      vGradient('#ffe9a8', '#ffd1dc');
+      const r = rng(3);
+      const colors = ['#ff6b81', '#6fd19f', '#5b7cff', '#ffc53d', '#b388ff'];
+      for (let i = 0; i < 70; i++) {
+        const x0 = r() * W, sp = 120 + r() * 160, ph = r() * 10, c = colors[i % 5], delay = r() * 1.5;
+        const t = lt - delay; if (t < 0) continue;
+        const y = -40 + ((t * sp + r() * 200) % (H + 80));
+        ctx.save(); ctx.translate(x0 + Math.sin(t * 2 + ph) * 30, y); ctx.rotate(t * 3 + ph);
+        ctx.fillStyle = c; ctx.fillRect(-7, -4, 14, 8); ctx.restore();
+      }
+      const jump = Math.abs(Math.sin(lt * 5));
+      buddy(W / 2, 520 - jump * 60, 1.1, { raiseL: 1.3, raiseR: 1.3, eyes: 'happy', mouth: 'open', squash: 1 - (1 - jump) * 0.06 });
+      const items = ['保持睡眠', '不吸烟', '每天运动', '少吃糖'];
+      items.forEach((label, i) => {
+        const a = backOut((lt - 0.6 - i * 0.5) / 0.4);
+        if (a <= 0) return;
+        const x = i % 2 === 0 ? 190 : 530, y = 790 + Math.floor(i / 2) * 96;
+        ctx.save(); ctx.translate(x, y); ctx.scale(a, a);
+        roundRect(-150, -38, 300, 76, 38); ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.fill();
+        circle(-108, 0, 24, '#2f7d5b'); check(-108, 0, 1);
+        text(label, 18, 1, 32, '#1f2a24', 'bold', 'center');
+        ctx.restore();
+      });
+  } },
+];
+let acc = 0;
+SCENES.forEach(s => { s.start = acc; acc += s.d; });
+const TOTAL = acc;
+
+function render(t) {
+  t = clamp(t, 0, TOTAL - 1e-6);
+  const s = SCENES.find(sc => t < sc.start + sc.d) || SCENES[SCENES.length - 1];
+  const lt = t - s.start;
+  ctx.save(); s.draw(lt); ctx.restore();
+  tag(s.tag, lt, s.step);
+  caption(s.title, s.sub, lt);
+  // 转场淡入淡出
+  const fade = Math.max(clamp(1 - lt / 0.35), clamp(1 - (s.d - lt) / 0.35));
+  if (fade > 0) { ctx.fillStyle = `rgba(255,251,240,${fade})`; ctx.fillRect(0, 0, W, H); }
+}
+window.render = render;
+window.TOTAL = TOTAL;
+
+// 浏览器中直接播放（点击重新开始）
+if (!location.search.includes('export')) {
+  let start = performance.now();
+  document.getElementById('c').addEventListener('click', () => { start = performance.now(); });
+  const loop = now => { render(((now - start) / 1000) % TOTAL); requestAnimationFrame(loop); };
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
