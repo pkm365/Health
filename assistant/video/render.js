@@ -25,7 +25,7 @@ const out = path.resolve(process.argv[2] || path.join(__dirname, 'health-cartoon
     '-f', 'image2pipe', '-framerate', String(FPS), '-c:v', 'png', '-i', '-',
     '-i', wav,
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', '-preset', 'medium',
-    '-c:a', 'aac', '-b:a', '128k', '-shortest', '-movflags', '+faststart', out,
+    '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11', '-ac', '2', '-ar', '48000', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', out,
   ], { stdio: ['pipe', 'inherit', 'inherit'] });
 
   const frames = Math.round(total * FPS);
