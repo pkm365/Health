@@ -180,6 +180,17 @@
       <button class="primary" id="save-settings">保存设置</button>
       <span class="muted" id="settings-msg" style="margin-left:10px"></span>
     </div>
+
+    <div class="card">
+      <h2>手表 / 手机提醒</h2>
+      <p class="muted">勾选需要的提醒，导出日历文件（.ics）后在手机上打开并添加到日历。提醒每天自动重复，会通过手机日历推送到 Apple Watch、Wear OS、小米/华为手环等设备（需在手表 App 中开启日历通知）。修改作息后请重新导出，并删除旧的「健康助理」日程。</p>
+      <div id="reminder-list"></div>
+      <button class="primary" id="export-ics">导出提醒到日历（.ics）</button>
+      <p class="muted" style="margin-top:12px">页面打开时也可以直接用浏览器通知提醒：
+        <button class="link" id="enable-notify">开启浏览器通知</button>
+        <span id="notify-state"></span>
+      </p>
+    </div>
   </section>
 
   <footer>
@@ -193,7 +204,12 @@
 
   const DEFAULT_SETTINGS = {
     wake: '07:00', sleep: '23:00', eatStart: '10:00', eatHours: 8, caffeine: '14:00',
+    reminders: { sun: true, eatStart: true, caffeine: true, eatEnd: true, dim: true, checkin: true },
   };
+  // 不在时间线中、仅用于提醒的项目
+  const EXTRA_REMINDERS = [
+    { id: 'checkin', title: '记录今天的数据并打卡', text: '睡前 90 分钟：打开健康助理，记录数据、完成打卡', offsetFromSleep: -90 },
+  ];
 
   // 每日打卡项，来自文章中的实践建议
   const HABITS = [
@@ -238,10 +254,12 @@
     try {
       const data = JSON.parse(localStorage.getItem(STORE_KEY));
       if (data && typeof data === 'object') {
-        return { settings: { ...DEFAULT_SETTINGS, ...data.settings }, days: data.days || {} };
+        const settings = { ...DEFAULT_SETTINGS, ...data.settings };
+        settings.reminders = { ...DEFAULT_SETTINGS.reminders, ...(data.settings && data.settings.reminders) };
+        return { settings, days: data.days || {} };
       }
     } catch (e) { /* 忽略，使用默认值 */ }
-    return { settings: { ...DEFAULT_SETTINGS }, days: {} };
+    return { settings: { ...DEFAULT_SETTINGS, reminders: { ...DEFAULT_SETTINGS.reminders } }, days: {} };
   }
   function save() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* 存储不可用 */ }
@@ -311,23 +329,24 @@
     const eatStart = toMin(s.eatStart);
     const eatEnd = eatStart + (Number(s.eatHours) || 8) * 60;
     const awake = span(wake, sleep);
+    // [id, 时间, 提醒标题, 时间线说明]
     const items = [
-      [wake, '起床，尽快到户外接触阳光 2–10 分钟'],
-      [wake + 30, '适合运动的时间点之一（醒来后 30 分钟）'],
-      [wake + 60, '最早进食时间（起床后至少 1 小时）'],
-      [eatStart, `进食窗口开始（${s.eatHours} 小时）`],
-      [wake + 180, '适合运动的时间点之一（醒来后 3 小时）'],
-      [wake + Math.round(awake / 2), '可能出现精神低谷，可以午睡、Yoga Nidra 或冥想'],
-      [toMin(s.caffeine), '建议的咖啡因截止时间（因人而异）'],
-      [wake + 660, '适合运动的时间点之一（醒来后 11 小时）'],
-      [eatEnd, '进食窗口结束，饭后可以散散步'],
-      [sleep - 180, '睡前 3 小时：尽量不再进食；晚餐可以吃些淀粉、白肉'],
-      [sleep - 60, '调暗灯光，减少屏幕，必要时用低位暖光/红光'],
-      [sleep, '入睡，目标睡眠 6–8 小时'],
+      ['sun',      wake, '去户外晒太阳', '起床，尽快到户外接触阳光 2–10 分钟'],
+      ['ex1',      wake + 30, '运动时间', '适合运动的时间点之一（醒来后 30 分钟）'],
+      ['firstmeal', wake + 60, '可以吃东西了', '最早进食时间（起床后至少 1 小时）'],
+      ['eatStart', eatStart, '进食窗口开始', `进食窗口开始（${s.eatHours} 小时）`],
+      ['ex2',      wake + 180, '运动时间', '适合运动的时间点之一（醒来后 3 小时）'],
+      ['rest',     wake + Math.round(awake / 2), '休息一下', '可能出现精神低谷，可以午睡、Yoga Nidra 或冥想'],
+      ['caffeine', toMin(s.caffeine), '咖啡因截止', '建议的咖啡因截止时间（因人而异）'],
+      ['ex3',      wake + 660, '运动时间', '适合运动的时间点之一（醒来后 11 小时）'],
+      ['eatEnd',   eatEnd, '进食窗口结束', '进食窗口结束，饭后可以散散步'],
+      ['lastmeal', sleep - 180, '睡前 3 小时，停止进食', '睡前 3 小时：尽量不再进食；晚餐可以吃些淀粉、白肉'],
+      ['dim',      sleep - 60, '调暗灯光，放下手机', '调暗灯光，减少屏幕，必要时用低位暖光/红光'],
+      ['sleep',    sleep, '该睡觉了', '入睡，目标睡眠 6–8 小时'],
     ];
     // 以起床时间为起点排序，处理跨午夜
     return items
-      .map(([t, text]) => ({ t: ((t % 1440) + 1440) % 1440, text, order: span(wake, t) }))
+      .map(([id, t, title, text]) => ({ id, t: ((t % 1440) + 1440) % 1440, title, text, order: span(wake, t) }))
       .sort((a, b) => a.order - b.order);
   }
 
@@ -529,10 +548,12 @@
       eatStart: get('s-eat-start') || DEFAULT_SETTINGS.eatStart,
       eatHours: hours,
       caffeine: get('s-caffeine') || DEFAULT_SETTINGS.caffeine,
+      reminders: state.settings.reminders,
     };
     save();
     renderSettings();
     renderAll();
+    renderReminders();
     const s = state.settings;
     const warn = [];
     if (span(toMin(s.wake), toMin(s.eatStart)) < 60) warn.push('进食窗口开始时间距起床不足 1 小时');
@@ -542,6 +563,116 @@
     const msg = document.getElementById('settings-msg');
     msg.textContent = warn.length ? `已保存。注意：${warn.join('；')}。` : '已保存';
   });
+
+  // ---------- 提醒 ----------
+  function reminderItems() {
+    const sleep = toMin(state.settings.sleep);
+    const extras = EXTRA_REMINDERS.map(r => ({ ...r, t: ((sleep + r.offsetFromSleep) % 1440 + 1440) % 1440 }));
+    return [...buildTimeline(), ...extras].sort((a, b) =>
+      span(toMin(state.settings.wake), a.t) - span(toMin(state.settings.wake), b.t));
+  }
+
+  function renderReminders() {
+    const box = document.getElementById('reminder-list');
+    box.innerHTML = '';
+    reminderItems().forEach(it => {
+      const row = document.createElement('label');
+      row.className = 'check';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = !!state.settings.reminders[it.id];
+      input.addEventListener('change', () => {
+        state.settings.reminders[it.id] = input.checked;
+        save();
+      });
+      const text = document.createElement('span');
+      text.innerHTML = '<div></div><div class="muted"></div>';
+      text.firstChild.textContent = `${fmtMin(it.t)}  ${it.title}`;
+      text.lastChild.textContent = it.text;
+      row.append(input, text);
+      box.appendChild(row);
+    });
+  }
+
+  // iCalendar 文本转义与按 75 字节折行
+  const icsEscape = v => v.replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  function icsFold(line) {
+    const enc = new TextEncoder();
+    const out = [];
+    let cur = '', bytes = 0;
+    for (const ch of line) {
+      const n = enc.encode(ch).length;
+      if (bytes + n > (out.length ? 74 : 75)) { out.push(cur); cur = ''; bytes = 0; }
+      cur += ch; bytes += n;
+    }
+    out.push(cur);
+    return out.join('\r\n ');
+  }
+
+  function buildIcs() {
+    const today = new Date();
+    const ymd = `${today.getFullYear()}${pad(today.getMonth() + 1)}${pad(today.getDate())}`;
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+    const lines = [
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Health Assistant//ZH', 'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH', 'X-WR-CALNAME:健康助理',
+    ];
+    const chosen = reminderItems().filter(it => state.settings.reminders[it.id]);
+    chosen.forEach(it => {
+      // 浮动本地时间（无时区），跟随手机所在时区每天同一时刻提醒
+      const start = `${ymd}T${pad(Math.floor(it.t / 60))}${pad(it.t % 60)}00`;
+      lines.push(
+        'BEGIN:VEVENT',
+        `UID:health-assistant-${it.id}@local`,
+        `DTSTAMP:${stamp}`,
+        `DTSTART:${start}`,
+        'DURATION:PT5M',
+        'RRULE:FREQ=DAILY',
+        `SUMMARY:${icsEscape(it.title)}`,
+        `DESCRIPTION:${icsEscape(it.text)}`,
+        'TRANSP:TRANSPARENT',
+        'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEscape(it.title)}`, 'TRIGGER:PT0M', 'END:VALARM',
+        'END:VEVENT',
+      );
+    });
+    lines.push('END:VCALENDAR');
+    return { text: lines.map(icsFold).join('\r\n') + '\r\n', count: chosen.length };
+  }
+
+  document.getElementById('export-ics').addEventListener('click', () => {
+    const { text, count } = buildIcs();
+    if (!count) { alert('请至少勾选一个提醒。'); return; }
+    const blob = new Blob([text], { type: 'text/calendar;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'health-reminders.ics';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  // 页面打开期间的浏览器通知
+  let lastNotified = '';
+  function notifyState() {
+    const el = document.getElementById('notify-state');
+    if (!('Notification' in window)) { el.textContent = '（当前浏览器不支持）'; return; }
+    el.textContent = Notification.permission === 'granted' ? '（已开启）'
+      : Notification.permission === 'denied' ? '（已被拒绝，请在浏览器设置中允许）' : '';
+  }
+  document.getElementById('enable-notify').addEventListener('click', async () => {
+    if (!('Notification' in window)) return notifyState();
+    await Notification.requestPermission();
+    notifyState();
+  });
+  function checkNotifications() {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const now = nowMin();
+    const key = `${todayKey()} ${now}`;
+    if (key === lastNotified) return;
+    reminderItems()
+      .filter(it => state.settings.reminders[it.id] && it.t === now)
+      .forEach(it => { try { new Notification(it.title, { body: it.text }); } catch (e) { /* 部分移动浏览器不支持 */ } });
+    lastNotified = key;
+  }
 
   // ---------- 启动 ----------
   function renderAll() {
@@ -558,6 +689,9 @@
   renderSettings();
   renderAll();
   renderLogForm();
+  renderReminders();
+  notifyState();
+  setInterval(checkNotifications, 20 * 1000);
   setInterval(() => {
     // 跨天时刷新全部内容
     if (todayKey() !== lastDay) { lastDay = todayKey(); renderAll(); renderLogForm(); }
