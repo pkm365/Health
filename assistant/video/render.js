@@ -1,6 +1,10 @@
-// 把 cartoon.html 逐帧渲染成 MP4（带背景音乐）。
+// 把动画页面逐帧渲染成 MP4（带背景音乐）。
+// 页面需提供 render(t) 和 TOTAL；可选 SIZE（默认 720x1280）和 ready（Promise）。
+// canvas 页面直接导出画布，其余页面按整页截图。
 // 依赖：playwright、ffmpeg、python3 + numpy
-// 用法：node render.js [输出.mp4]
+// 用法：node render.js [页面.html] [输出.mp4]
+//   node render.js                                  -> cartoon.html   -> health-cartoon.mp4
+//   node render.js explainer.html health-explainer.mp4
 const { chromium } = require('playwright');
 const { spawn, execFileSync } = require('child_process');
 const path = require('path');
@@ -8,14 +12,18 @@ const os = require('os');
 
 const FPS = 30;
 const FFMPEG = process.env.FFMPEG || 'ffmpeg';
-const out = path.resolve(process.argv[2] || path.join(__dirname, 'health-cartoon.mp4'));
+const pageFile = process.argv[2] || 'cartoon.html';
+const out = path.resolve(process.argv[3] || path.join(__dirname, 'health-cartoon.mp4'));
 
 (async () => {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 720, height: 1280 } });
-  await page.goto('file://' + path.join(__dirname, 'cartoon.html') + '?export');
-  await page.evaluate(() => document.fonts.ready);
+  await page.goto('file://' + path.join(__dirname, pageFile) + '?export');
+  await page.evaluate(async () => { await window.ready; await document.fonts.ready; });
+  const size = await page.evaluate(() => window.SIZE || { width: 720, height: 1280 });
+  await page.setViewportSize(size);
   const total = await page.evaluate(() => TOTAL);
+  const isCanvas = await page.evaluate(() => !!document.getElementById('c'));
 
   const wav = path.join(os.tmpdir(), `health-cartoon-${process.pid}.wav`);
   execFileSync('python3', [path.join(__dirname, 'music.py'), wav, String(total)]);
@@ -30,8 +38,15 @@ const out = path.resolve(process.argv[2] || path.join(__dirname, 'health-cartoon
 
   const frames = Math.round(total * FPS);
   for (let i = 0; i < frames; i++) {
-    const b64 = await page.evaluate(t => { render(t); return document.getElementById('c').toDataURL('image/png').split(',')[1]; }, i / FPS);
-    if (!ff.stdin.write(Buffer.from(b64, 'base64'))) await new Promise(r => ff.stdin.once('drain', r));
+    let png;
+    if (isCanvas) {
+      const b64 = await page.evaluate(t => { render(t); return document.getElementById('c').toDataURL('image/png').split(',')[1]; }, i / FPS);
+      png = Buffer.from(b64, 'base64');
+    } else {
+      await page.evaluate(t => render(t), i / FPS);
+      png = await page.screenshot({ type: 'png' });
+    }
+    if (!ff.stdin.write(png)) await new Promise(r => ff.stdin.once('drain', r));
     if (i % 150 === 0) process.stdout.write(`\r${i}/${frames}`);
   }
   ff.stdin.end();

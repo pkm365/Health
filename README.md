@@ -17,6 +17,8 @@ UPDATES:
 
 还有一段鼓励自己健康生活的卡通小视频：[小健的健康小招](assistant/video/health-cartoon.mp4)（[在线动画版](assistant/video/cartoon.html)）。
 
+以及一段 Excalidraw 手绘白板风格的讲解动画：[一天的健康时钟](assistant/video/health-explainer.mp4)（[在线动画版](assistant/video/explainer.html)），讲清楚每个习惯背后的原理。
+
 # 背景
 
 去年 5 月曾经写了一篇文章介绍了下 [Lex Fridman 大佬的日常生活安排](https://zhuanlan.zhihu.com/p/371254789)，后续我也根据他的方法对自己的日常生活做了一系列规范和改进。这一年整体实行下来，效果还是非常显著的，本文的最后会对我的一些实践以及借助的工具做一些分享。
